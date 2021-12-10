@@ -3,6 +3,7 @@ library(data.table)
 library(caret)
 library(rpart)
 library(tidyr)
+library(mltools)
 
 set.seed(100)
 
@@ -45,51 +46,39 @@ dados$Agencia_ID = NULL
 #As variáveis preditoras são todas fatores
 dados = dados %>% mutate_at(-4,as.factor)
 
+dados = distinct(dados)
+
+#De acordo com a feature selection feita com o VarImp, as variáveis Ruta_SAK e Canal_ID não tem importância no modelo
+dados$Ruta_SAK = NULL
+dados$Canal_ID = NULL  
+
+#Assim, novas duplicatas foram geradas
+dados = distinct(dados)
+
 #Não há nenhum nulo
 sapply(dados,function(x)sum(is.na(x)))
 
 #MODELAGEM
 #Como a base de dados é muito grande, para ser possível fazer o treinamento eu criei um 
-#modelo para cada rota através de um subset dos dados
-sub_rota = function(rota){
-  dados_rota = subset(dados, Ruta_SAK==rota,-2)
-}
-
+#modelo para cada endereço através de um subset dos dados
 sub_end = function(end){
-  dados_end = subset(dados, endereco==end,-6)
+  dados_end = subset(dados, endereco==end,-4)
 }
 
-sub_prod = function(prod){
-  dados_prod = subset(dados, Producto_ID==prod,-3)
-}
-
-sub_canal = function(canal){
-  dados_canal = subset(dados, Canal_ID==canal,-1)
-}
-
-#LISTA DE FREQUENCIAS DE CADA ROTA
-data.frame(table(dados$Ruta_SAK)) %>% arrange(Freq) %>% View()
-dados_rota = sub_rota('2001')
-
+#LISTA DE FREQUENCIAS DE CADA ENDEREÇO
 data.frame(table(dados$endereco)) %>% arrange(Freq) %>% View()
-dados_end = sub_end('2388 CHETUMAL, QUINTANA ROO')
-
-data.frame(table(dados$Producto_ID)) %>% arrange(Freq) %>% View()
-dados_prod = sub_prod('43209')
-
-data.frame(table(dados$Canal_ID)) %>% arrange(Freq) %>% View()
-dados_canal = sub_canal('5')
+dados_end = sub_end('2309 NORTE, JALISCO')
 
 #Separando em treino e teste
-tt = createDataPartition(dados_rota$Demanda_uni_equil,p=0.7,list = F)
-treino = dados_rota[tt,]
-teste = dados_rota[-tt,]
+tt = createDataPartition(dados_end$Demanda_uni_equil,p=0.7,list = F)
+treino = dados_end[tt,]
+teste = dados_end[-tt,]
 
 sprintf('Treino: %d, teste: %d',dim(treino)[1],dim(teste)[1])
 
 #Função que automatiza a avaliação do algoritmo
 avalia=function(modelo){
-  previsoes = predict(modelo,teste[,-4])
+  previsoes = predict(modelo,teste[,-2])
   compara = data.frame(real = teste$Demanda_uni_equil,previsto=previsoes)
   cat(sprintf('#MAE: %g',MAE(previsoes,teste$Demanda_uni_equil)))
   cat('\n')
@@ -104,6 +93,7 @@ modelo_rpart = rpart(Demanda_uni_equil~.,data=treino)
 df_rpart = avalia(modelo_rpart)
 rmsle(df_rpart$previsto,df_rpart$real)
 
+varImp(modelo_rpart)
 #Separando por produto
 #MAE: 2.98414
 #Resíduos: -3529.56
