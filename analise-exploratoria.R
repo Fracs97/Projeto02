@@ -22,7 +22,7 @@ str(dados)
 #Todos os inteiros, exceto o Demanda_uni_equil são na verdade categorias codificadas
 #(fatores)
 dados = dados %>% mutate_at(c(1:5),as.factor) 
-
+ 
 #Agrupando os dados por produto, somando a demanda total até hoje e ordenando de forma
 #decrescente
 #TOTAL DE UNIDADES DEMANDADAS ATÉ HOJE E QUANTIDADE MEDIANA DE UNIDADES POR PEDIDO:
