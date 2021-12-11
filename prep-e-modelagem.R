@@ -67,7 +67,7 @@ sub_end = function(end){
 
 #LISTA DE FREQUENCIAS DE CADA ENDEREÇO
 data.frame(table(dados$endereco)) %>% arrange(Freq) %>% View()
-dados_end = sub_end('2309 NORTE, JALISCO')
+dados_end = sub_end('2562 MEXICALI PLAZA, BAJA CALIFORNIA NORTE')
 
 #Separando em treino e teste
 tt = createDataPartition(dados_end$Demanda_uni_equil,p=0.7,list = F)
@@ -93,35 +93,26 @@ modelo_rpart = rpart(Demanda_uni_equil~.,data=treino)
 df_rpart = avalia(modelo_rpart)
 rmsle(df_rpart$previsto,df_rpart$real)
 
-varImp(modelo_rpart)
+prop.table(table(dados$Producto_ID)) %>% View()
+
+prop.table(table(dados$NombreCliente)) %>% View()
+#TUNING
+tuning_minsplit = tune.rpart(Demanda_uni_equil~.,data=treino,minsplit = seq(10,100,10))
+
 #Separando por produto
 #MAE: 2.98414
 #Resíduos: -3529.56
 #R²: 0.48967
 #RMSLE: 0.6061118
 
-#Separando por rota
-#MAE: 3.44798
-#Resíduos: 1208.88
-#R²: 0.484126
-#RMSLE: 0.5918016
-
 #Separando por endereco
 #MAE: 4.10843
 #Resíduos: -279.615
 #R²: 0.673654
 
-#Separando por canal
-#MAE: 66.1614
-#Resíduos: 6305.5
-#R²: 0.555059
-#RMSLE: 1.17
-
-#CUBIST (Regressão linear)
-modelo_cub = cubist(treino[,1:3],treino$Demanda_uni_equil,committees = 3)
-df_cub = avalia(modelo_cub)
-#MAE: 11.2576
-#Resíduos: 89179.2
-#R²: 0.297063
+#Antes do tuning
+#MAE: 6.63375
+#Resíduos: 1349.52
+#R²: 0.581456
 
 #SVM NÃO RODOU DEVIDO À FALTA DE MEMÓRIA
