@@ -1,6 +1,7 @@
 library(data.table)
 library(dplyr)
 library(ggplot2)
+library(tidyr)
 
 dados = fread('train.csv')
 head(dados)
@@ -18,10 +19,34 @@ dados[,c('Venta_hoy','Dev_proxima')] = NULL
 #a variável Semana só enviesaria os resultados, por isso vou removê-la
 dados[,'Semana'] = NULL
 
+#Os códigos dos clientes são por ordem de chegada, e não tem valor algum por si só, essa variável só possui alguma
+#utilidade quando substituída pelos nomes reais dos clientes, que estão no arquivo cliente_tabla.csv
+clientes = read.csv('cliente_tabla.csv',fileEncoding ="UTF-8")
+dados = dados %>% left_join(clientes)
+
+#A coluna Cliente_ID não é mais necessária
+dados$Cliente_ID = NULL
+
+#É preciso realizar o processo de substituição dos códigos das agências pelos endereços, pois uma mesma agência 
+#tem mais de um ID, conforme town_state.csv
+agencias = read.csv('town_state.csv',fileEncoding ="UTF-8")
+
+#Os endereços estão divididos entre duas colunas, é preciso unir elas
+agencia_mod = unite(agencias[,c(2,3)],'endereco',sep=', ')
+
+#Recuperando a coluna de ID, que foi perdida
+agencia_mod$Agencia_ID = agencias$Agencia_ID
+
+#Fazendo o join
+dados = dados %>% left_join(agencia_mod)
+
+#A coluna Agencia_ID não é mais necessária
+dados$Agencia_ID = NULL
+
 str(dados)
 #Todos os inteiros, exceto o Demanda_uni_equil são na verdade categorias codificadas
 #(fatores)
-dados = dados %>% mutate_at(c(1:5),as.factor) 
+dados = dados %>% mutate_at(-4,as.factor) 
  
 #Agrupando os dados por produto, somando a demanda total até hoje e ordenando de forma
 #decrescente
@@ -47,20 +72,18 @@ ggplot(data=agrupa[1:10,]) + geom_bar(aes(reorder(Producto_ID,-total_p),total_p,
 #Agrupando os dados por Cliente, somando a demanda total até hoje e ordenando de forma
 #decrescente
 #TOTAL DE UNIDADES POR CLIENTE:
-agrupa =  dados %>% group_by(Cliente_ID) %>% summarise(total=sum(Demanda_uni_equil)) %>%
+agrupa =  dados %>% group_by(NombreCliente) %>% summarise(total=sum(Demanda_uni_equil)) %>%
   arrange(desc(total)) %>% mutate(total_p=round(prop.table(total)*100,5))
 
-#As unidades demandadas por cliente estão muito dispersas, o cliente que pede mais unidades
-#é o 653378, com 3.33% do total, que é muito maior que o segundo colocado, com 0.16%
+#Os clientes que mais demandam unidades de produtos (variados) é "NO IDENTIFICADO" com 15% e "PUEBLA REMISION" com 3.3%
 
 sum(agrupa[1:10,'total_p'])
-#Em termos percentuais, os 10 primeiros clientes compram 3.81% de todas as unidades
+#Em termos percentuais, os 10 primeiros clientes compraram 20.14% de todas as unidades
 #da demanda. São eles, em forma gráfica:
-ggplot() + geom_bar(data=agrupa[1:10,],aes(reorder(Cliente_ID,-total_p),total_p,fill=Cliente_ID),
-                    stat='identity') + ggtitle('Top 10 clientes que compram mais unidades (3.81% do total)')+
-  theme(plot.title = element_text(size=20,hjust=0.5))+ ylab('Percentual do total de unidades') +
-  xlab('ID do cliente')
-
+ggplot() + geom_bar(data=agrupa[1:10,],aes(reorder(NombreCliente,-total_p),total_p,fill=NombreCliente),
+                    stat='identity') + ggtitle('Top 10 clientes que compram mais unidades (20.14% do total)')+
+  theme(plot.title = element_text(size=20,hjust=0.5),axis.text.x=element_blank()) + 
+  ylab('Percentual do total de unidades') + xlab('Nome do cliente')
 
 #Agrupando os dados por Ruta_SAK, somando a demanda total até hoje e ordenando de forma
 #decrescente
@@ -94,10 +117,10 @@ ggplot() + geom_bar(data=agrupa,aes(reorder(Canal_ID,-total_p),total_p,fill=Cana
   theme(plot.title = element_text(size=20,hjust=0.5))+ ylab('Percentual do total de unidades') +
   xlab('ID do canal')
 
-#Agrupando os dados por Agencia_ID, somando a demanda total até hoje e ordenando de forma
+#Agrupando os dados por Agencia, somando a demanda total até hoje e ordenando de forma
 #decrescente
 #TOTAL DE UNIDADES POR AGENCIA:
-agrupa =  dados %>% group_by(Agencia_ID) %>% summarise(total=sum(Demanda_uni_equil)) %>%
+agrupa =  dados %>% group_by(endereco) %>% summarise(total=sum(Demanda_uni_equil)) %>%
   arrange(desc(total)) %>% mutate(total_p=round(prop.table(total)*100,5))
 
 plot(agrupa$total_p,main='Decaimento das unidades demandadas por agencia')
@@ -105,9 +128,9 @@ plot(agrupa$total_p,main='Decaimento das unidades demandadas por agencia')
 #formato de exponencial negativa
 
 sum(agrupa[1:10,'total_p'])
-#Em termos percentuais, as 10 primeiras agencias representam 7.22% de todas as unidades
+#Em termos percentuais, as 10 primeiras agencias representam 11.35% de todas as unidades
 #da demanda. São eles, em forma gráfica:
-ggplot() + geom_bar(data=agrupa[1:10,],aes(reorder(Agencia_ID,-total_p),total_p,fill=Agencia_ID),
+ggplot() + geom_bar(data=agrupa[1:10,],aes(reorder(endereco,-total_p),total_p,fill=endereco),
                     stat='identity') + ggtitle('Top 10 agencias que geram mais demanda (7.22% do total)')+
-  theme(plot.title = element_text(size=20,hjust=0.5))+ ylab('Percentual do total de unidades') +
-  xlab('ID da agencia')
+  theme(plot.title = element_text(size=20,hjust=0.5),axis.text.x=element_blank())+ 
+  ylab('Percentual do total de unidades') +  xlab('ID da agencia')
