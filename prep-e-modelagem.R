@@ -2,44 +2,30 @@ library(dplyr)
 library(data.table)
 library(caret)
 library(rpart)
-library(mltools)
-library(tidyr)
 library(tidymodels)
+library(doParallel)
+library(tidyr)
 
 set.seed(100)
 
 #DATA MUNGING
 dados = fread('train_enxuto.csv')
 
-dados = sample_n(dados,0.8*nrow(dados))
-#De acordo com a feature selection feita com o VarImp, a variável Canal_ID não tem importância no modelo
-dados$Canal_ID = NULL
-
-#Removendo duplicatas
-dados = distinct(dados)
-
-#Criando variáveis com as médias de demanda para cada coluna
-medias_cliente = dados %>% group_by(NombreCliente) %>% summarise(media_cliente=mean(Demanda_uni_equil))
-medias_agencia = dados %>% group_by(endereco) %>% summarise(media_agencia=median(Demanda_uni_equil))
-
-dados = dados %>% left_join(medias_cliente)
-dados = dados %>% left_join(medias_agencia)
-
 #Ajustando os tipos das variáveis
-dados = dados %>% mutate_at(-3,as.factor)
+dados = dados %>% mutate_at(-4,as.factor)
 
 str(dados)
 #PRÉ-PROCESSAMENTO
 #Os fatores tem levels demais, é preciso substituir todos os menos frequentes por "Other" para aumentar e muito
 #a velocidade de treinamento
-receita = recipe(Demanda_uni_equil~.,data=dados) %>% step_other(Ruta_SAK,threshold = 0.0002) %>%
-  step_other(Producto_ID,threshold=3e-4) %>% step_other(NombreCliente,threshold = 4e-5) %>%
-  step_other(endereco,threshold = 2.9e-3)
+receita = recipe(Demanda_uni_equil~.,data=dados)  %>% step_other(Ruta_SAK,threshold = 2e-6) %>% 
+   step_other(NombreCliente,threshold = 1e-5) %>%  step_other(endereco,threshold = 2.9e-3)
 
+#Efetuando a mudança dos levels dos fatores
 dados = prep(receita) %>% juice()
 
-cor(dados[,c(3,6)])
-#media_cliente e Demanda_uni_equil tem uma correlação de 0.56
+#Removendo duplicatas
+dados = distinct(dados)
 
 #Não há nenhum nulo
 sapply(dados,function(x)sum(is.na(x)))
@@ -51,14 +37,15 @@ sub_end = function(end){
   dados_end = subset(dados, endereco==end,-5)
 }
 
-#LISTA DE FREQUENCIAS DE CADA ENDEREÇO
+#LISTA DE FREQUENCIAS DE CADA ENDEREÇO DE AGENCIA
 data.frame(table(dados$endereco)) %>% arrange(Freq) %>% View()
-dados_end = sub_end('2562 MEXICALI PLAZA, BAJA CALIFORNIA NORTE')
+#Escolhendo o endereço da agência
+dados_end = sub_end('2001 AG. ATIZAPAN, ESTADO DE MÉXICO')
 
 #Separando em treino e teste
-tt = createDataPartition(dados$Demanda_uni_equil,p=0.7,list = F)
-treino = dados[tt,]
-teste = dados[-tt,]
+tt = initial_split(dados_end,0.7,strata = Demanda_uni_equil)
+treino = training(tt)
+teste = testing(tt)
 
 sprintf('Treino: %d, teste: %d',dim(treino)[1],dim(teste)[1])
 
@@ -74,15 +61,10 @@ avalia=function(modelo){
   return(compara)
 }
 
+#ANTES DO TUNING
 #RPART
-modelo_rpart = rpart(Demanda_uni_equil~.,data=treino,control = rpart.control(cp=0.00000316,
-                                                                maxdepth = 15,min_n=30))
+modelo_rpart = rpart(Demanda_uni_equil~.,data=treino)
 df_rpart = avalia(modelo_rpart)
-rmsle(df_rpart$previsto,df_rpart$real)
-
-#MAE: 5.5387
-#Resíduos: 86175.2
-#R²: 0.412905
 
 #TUNING
 #Definindo os hiperparâmetros que vão ser testados
@@ -91,7 +73,7 @@ tune_spec = decision_tree(cost_complexity=tune(),tree_depth=tune(),min_n=tune(),
 #cost_complexity = cp, tree_depth = max_depth, min_n = minsplit
 
 #Gerando combinações dos hiperparâmetros com valores arbitrários
-tree_grid = grid_regular(cost_complexity(),tree_depth(),min_n(),levels=4)
+tree_grid = grid_regular(cost_complexity(),tree_depth(),min_n(),levels=5)
 #125 combinações diferentes foram geradas
 
 #O treinamento dos hiperparâmetros não é feito na base de dados de treino inteira, e sim com pedaços gerados por
@@ -104,11 +86,32 @@ tree_wf = workflow() %>% add_model(tune_spec) %>% add_formula(Demanda_uni_equil~
 #Realizando o treinamento dos hiperparâmetros
 tree_res = tree_wf %>% tune_grid(resamples=vf,grid=tree_grid)
 
-#TESTAR FAZER O TUNING PARA TODOS OS DADOS, MAS SE NÃO FUNCIONAR, SEPARAR POR ENDEREÇO. FAZER UMA FUNÇÃO QUE
-#BUSCA O ENDEREÇO DA AGENCIA NOS DADOS DE TREINO, E SE NÃO ENCONTRAR, SUBSTITUIR POR OTHER
-
 #Extraindo as métricas e seus resultados
 tree_res %>% collect_metrics() %>% select(cost_complexity,tree_depth,.metric,mean,min_n) %>% arrange(mean) %>% View()
 
-tree_res %>% select_best('rsq')
+#Extraindo o melhor modelo
+best_rsq = tree_res %>% select_best('rsq')
 
+#Criando o modelo com os parâmetros que geram o maior coeficiente de determinação R²
+final_rf = finalize_model(tune_spec, best_rsq)
+
+
+#Aplicando os melhores parâmetros para o modelo rpart
+final_wf = workflow() %>% add_formula(Demanda_uni_equil~.) %>% add_model(final_rf) %>% last_fit(tt,metrics=metric_set(rsq,mae))
+
+#AVALIAÇÃO
+#R² (rsq) E MAE DO MODELO PARA O ENDEREÇO ESCOLHIDO
+final_wf %>% collect_metrics() %>% select(.metric,.estimate)
+
+#MAE: 3.37685
+#R²: 0.457112
+
+#Coletando previsões
+final_wf %>% collect_predictions() %>% select(c('.row','.pred','Demanda_uni_equil')) %>% View()
+
+#Modelo com os melhores parâmetros
+modelo = rpart(Demanda_uni_equil~.,data=treino,control=rpart.control(cp=0.00000316,maxdepth = 15,minsplit = 40))
+df_rpart = avalia(modelo_rpart)
+
+#Previsões finais
+df_rpart %>% mutate(previsto=round(previsto,0)) %>% View()
