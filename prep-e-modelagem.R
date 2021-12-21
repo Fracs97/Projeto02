@@ -14,16 +14,6 @@ dados = fread('train_enxuto.csv')
 #Ajustando os tipos das variáveis
 dados = dados %>% mutate_at(-4,as.factor)
 
-str(dados)
-#PRÉ-PROCESSAMENTO
-#Os fatores tem levels demais, é preciso substituir todos os menos frequentes por "Other" para aumentar e muito
-#a velocidade de treinamento
-receita = recipe(Demanda_uni_equil~.,data=dados)  %>% step_other(Ruta_SAK,threshold = 2e-6) %>% 
-   step_other(NombreCliente,threshold = 1e-5) %>%  step_other(endereco,threshold = 2.9e-3)
-
-#Efetuando a mudança dos levels dos fatores
-dados = prep(receita) %>% juice()
-
 #Removendo duplicatas
 dados = distinct(dados)
 
@@ -34,13 +24,25 @@ sapply(dados,function(x)sum(is.na(x)))
 #Como a base de dados é muito grande, para ser possível fazer o treinamento eu criei um 
 #modelo para cada endereço através de um subset dos dados
 sub_end = function(end){
-  dados_end = subset(dados, endereco==end,-5)
+  dados_end = subset(dados, endereco==end,-6)
 }
 
 #LISTA DE FREQUENCIAS DE CADA ENDEREÇO DE AGENCIA
 data.frame(table(dados$endereco)) %>% arrange(Freq) %>% View()
 #Escolhendo o endereço da agência
 dados_end = sub_end('2001 AG. ATIZAPAN, ESTADO DE MÉXICO')
+
+str(dados_end)
+#PRÉ-PROCESSAMENTO
+#Os fatores tem levels demais, é preciso substituir todos os menos frequentes por "Other" para aumentar e muito
+#a velocidade de treinamento
+receita = recipe(Demanda_uni_equil~.,data=dados_end)  %>% step_other(Ruta_SAK,threshold = 2e-6) %>% 
+  step_other(NombreCliente,threshold = 1e-5)
+
+#Efetuando a mudança dos levels dos fatores
+dados_end = prep(receita) %>% juice()
+
+dados_end = distinct(dados_end)
 
 #Separando em treino e teste
 tt = initial_split(dados_end,0.7,strata = Demanda_uni_equil)
@@ -95,7 +97,6 @@ best_rsq = tree_res %>% select_best('rsq')
 #Criando o modelo com os parâmetros que geram o maior coeficiente de determinação R²
 final_rf = finalize_model(tune_spec, best_rsq)
 
-
 #Aplicando os melhores parâmetros para o modelo rpart
 final_wf = workflow() %>% add_formula(Demanda_uni_equil~.) %>% add_model(final_rf) %>% last_fit(tt,metrics=metric_set(rsq,mae))
 
@@ -103,15 +104,8 @@ final_wf = workflow() %>% add_formula(Demanda_uni_equil~.) %>% add_model(final_r
 #R² (rsq) E MAE DO MODELO PARA O ENDEREÇO ESCOLHIDO
 final_wf %>% collect_metrics() %>% select(.metric,.estimate)
 
-#MAE: 3.37685
-#R²: 0.457112
+#MAE: 3
+#R²: 0.525
 
 #Coletando previsões
-final_wf %>% collect_predictions() %>% select(c('.row','.pred','Demanda_uni_equil')) %>% View()
-
-#Modelo com os melhores parâmetros
-modelo = rpart(Demanda_uni_equil~.,data=treino,control=rpart.control(cp=0.00000316,maxdepth = 15,minsplit = 40))
-df_rpart = avalia(modelo_rpart)
-
-#Previsões finais
-df_rpart %>% mutate(previsto=round(previsto,0)) %>% View()
+final_wf %>% collect_predictions() %>% select(c('.pred','Demanda_uni_equil')) %>% View()
